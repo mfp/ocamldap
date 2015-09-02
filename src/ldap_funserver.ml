@@ -18,7 +18,8 @@
    USA
 *)
 
-module Make (M : Ldap_types.Monad) = struct
+module M = Ldap_conc.Id
+
 
 module Lber = Lber.Make(M)
 open Lber
@@ -397,5 +398,3 @@ let run si =
         (* Process out of band data *)
         List.iter (process_read reading writing excond) !excond
     done
-
-end

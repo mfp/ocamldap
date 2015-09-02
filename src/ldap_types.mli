@@ -314,21 +314,23 @@ module type Monad = sig
   type +'a t
 
   val return : 'a -> 'a t
-  val bind : 'a -> ('a -> 'b) -> 'b
+  val bind : 'a t -> ('a -> 'b t) -> 'b t
   val fail : exn -> 'a t
   val catch : (unit -> 'a t) -> (exn -> 'a t) -> 'a t
 
-  module type Unix = sig
-    type file_descr
-    type sockaddr
-    type socket_domain
-    type socket_type
+  val finalize : (unit -> 'a t) -> (unit -> unit t) -> 'a t
 
-    val close : file_descr -> unit t
-    val read : file_descr -> string -> int -> int -> int t
-    val write : file_descr -> string -> int -> int -> int t
+  (* module type Unix = sig *)
+    (* type file_descr *)
+    (* type sockaddr *)
+    (* type socket_domain *)
+    (* type socket_type *)
 
-    val connect : file_descr -> sockaddr -> unit t
-    val socket : socket_domain -> socket_type -> int -> file_descr
-  end
+    (* val close : file_descr -> unit t *)
+    (* val read : file_descr -> string -> int -> int -> int t *)
+    (* val write : file_descr -> string -> int -> int -> int t *)
+
+    (* val connect : file_descr -> sockaddr -> unit t *)
+    (* val socket : socket_domain -> socket_type -> int -> file_descr *)
+  (* end *)
 end

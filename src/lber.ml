@@ -22,6 +22,10 @@
 
 module Make (M : Ldap_types.Monad) = struct
 
+open M
+let (>>=) = bind
+let (>|=) t f = bind t (fun x -> return (f x))
+
 exception Decoding_error of string
 exception Encoding_error of string
 
@@ -36,7 +40,7 @@ exception Readbyte_error of readbyte_error
    the user of the encodeing functions herin will pass a function
    of the type readbyte, or writebyte to us when the encoding function
    is called. We will use that function to get or set raw data *)
-type readbyte = ?peek:bool -> int -> string
+type readbyte = ?peek:bool -> int -> string M.t
 type writebyte = (char -> unit)
 
 (* note on syntax. In this program I use some somewhat little used,
@@ -89,12 +93,12 @@ let readbyte_of_ber_element limit (rb:readbyte) =
                 byte_counter := !byte_counter + length;
                 rb length
               )
-              else raise (Readbyte_error End_of_stream)
+              else fail (Readbyte_error End_of_stream)
             else if !peek_counter + length <= limit && !byte_counter < limit then (
               peek_counter := !peek_counter + length;
               rb ~peek:true length
             )
-            else raise (Readbyte_error End_of_stream)
+            else fail (Readbyte_error End_of_stream)
           in
             f
       | Indefinite ->
@@ -266,43 +270,48 @@ let readbyte_of_readfun rfun =
    peek buffer, so it can garentee that it will work with
    readbyte_of_ber_element, even with blocking fds. *)
 let readbyte_of_fd fd =
-  readbyte_of_readfun
-    (fun buf off len ->
-       try Unix.read fd buf off len
-       with exn ->
-         (try Unix.close fd with _ -> ());raise exn)
+  (* readbyte_of_readfun *)
+    (* (fun buf off len -> *)
+       (* try Unix.read fd buf off len *)
+       (* with exn -> *)
+         (* (try Unix.close fd with _ -> ());raise exn) *)
+  failwith "FIXME"
 
 (* a readbyte implementation which reads from an SSL socket. It is
    otherwise the same as rb_of_fd *)
 let readbyte_of_ssl fd =
-  readbyte_of_readfun
-    (fun buf off len ->
-       try Ssl.read fd buf off len
-       with exn ->
-         (try Ssl.shutdown fd with _ -> ());raise exn)
+  failwith "FIXME"
+  (* readbyte_of_readfun *)
+    (* (fun buf off len -> *)
+       (* try Ssl.read fd buf off len *)
+       (* with exn -> *)
+         (* (try Ssl.shutdown fd with _ -> ());raise exn) *)
+
+let read_octet ~peek (rb:readbyte) = rb ~peek 1 >>= fun o -> return (int_of_char o.[0])
+let read_char ~peek (rb:readbyte) = rb ~peek 1 >>= fun o -> return o.[0]
 
 let decode_ber_length ?(peek=false) (readbyte:readbyte) = (* sec. 8.1.3.3, the definite length form *)
-  let octet = int_of_char (readbyte ~peek:peek 1).[0] in
+  read_octet ~peek readbyte >>= fun octet ->
     if octet = 0b1111_1111 then
       (* sec/ 8.1.3.5c *)
-      raise (Decoding_error "illegal initial length octet")
+      fail (Decoding_error "illegal initial length octet")
     else if octet = 0b1000_0000 then
       (* sec. 8.1.3.6 indefinite form *)
-      Indefinite
+      return Indefinite
     else if octet land 0b1000_0000 = 0b0000_0000 then
       (* sec. 8.1.3.4, definite length, short form *)
-      Definite (octet land 0b0111_1111)
+      return (Definite (octet land 0b0111_1111))
     else
       (* sec. 8.1.3.5, definite length, long form *)
       let rec decode_multioctet_length (readbyte:readbyte) numoctets remainingoctets value =
-        if numoctets > 4 then raise (Decoding_error "length cannot be represented");
-        if remainingoctets = 0 then Definite value
+        if numoctets > 4 then fail (Decoding_error "length cannot be represented")
+        else if remainingoctets = 0 then return (Definite value)
         else
-          let octet = int_of_char (readbyte ~peek:peek 1).[0] in
+          read_octet ~peek readbyte >>= fun octet ->
             if ((numoctets = 4) && (remainingoctets = 4) &&
                 (octet land 0b1000_0000 = 0b1000_0000)) (* we have only 31 bits *)
             then
-              raise (Decoding_error "length cannot be represented")
+              fail (Decoding_error "length cannot be represented")
             else
               decode_multioctet_length readbyte numoctets (remainingoctets - 1)
                 (value + (octet lsl ((numoctets - (numoctets - remainingoctets) - 1) * 8)))
@@ -311,35 +320,40 @@ let decode_ber_length ?(peek=false) (readbyte:readbyte) = (* sec. 8.1.3.3, the d
         decode_multioctet_length readbyte numoctets numoctets 0
 
 let decode_ber_header ?(peek=false) (readbyte:readbyte) =
-  let leading_octet = int_of_char (readbyte ~peek:peek 1).[0] in
-  let ber_tag = (* sec. 8.1.2.2c *)
+  read_octet ~peek readbyte >>= fun leading_octet ->
+  begin (* ber_tag *)
+  (* sec. 8.1.2.2c *)
     if leading_octet land 0b0001_1111 = 0b0001_1111 then
       (* sec. 8.1.2.4 multi octet tag encoding *)
       let rec decode_multioctet_tag (readbyte:readbyte) tag_value =
-        let octet = int_of_char (readbyte ~peek:peek 1).[0] in
-          if octet land 0b1000_0000 = 0b0000_0000 then tag_value + (octet land 0b0111_1111)
+        read_octet ~peek readbyte >>= fun octet ->
+          if octet land 0b1000_0000 = 0b0000_0000 then return (tag_value + (octet land 0b0111_1111))
           else decode_multioctet_tag readbyte (tag_value + (octet land 0b0111_1111))
       in
         decode_multioctet_tag readbyte 0
     else
       (* sec. 8.1.2.2 single octet tag encoding *)
-      leading_octet land 0b0001_1111
-  in
-  let ber_length = decode_ber_length ~peek:peek readbyte in
-    {ber_class = (* sec. 8.1.2.2a table 1 *)
-       (match leading_octet land 0b1100_0000 with
-            0b0000_0000 -> Universal
-          | 0b0100_0000 -> Application
-          | 0b1000_0000 -> Context_specific
-          | 0b1100_0000 -> Private
-          | _ -> raise (Decoding_error "ber_class, decoder bug"));
-     ber_primitive = (* sec. 8.1.2.5 *)
-       (match leading_octet land 0b0100_0000 with
-            0b0100_0000 -> false (* value is constructed *)
-          | 0b0000_0000 -> true
-          | _ -> raise (Decoding_error "ber_primitive, decoder bug")); (* value is primative *)
-     ber_tag = ber_tag;
-     ber_length = ber_length}
+      return (leading_octet land 0b0001_1111)
+  end >>= fun ber_tag ->
+   decode_ber_length ~peek:peek readbyte >>= fun ber_length ->
+     catch
+       (fun () ->
+          return
+          {ber_class = (* sec. 8.1.2.2a table 1 *)
+             (match leading_octet land 0b1100_0000 with
+                  0b0000_0000 -> Universal
+                | 0b0100_0000 -> Application
+                | 0b1000_0000 -> Context_specific
+                | 0b1100_0000 -> Private
+                | _ -> raise (Decoding_error "ber_class, decoder bug"));
+           ber_primitive = (* sec. 8.1.2.5 *)
+             (match leading_octet land 0b0100_0000 with
+                  0b0100_0000 -> false (* value is constructed *)
+                | 0b0000_0000 -> true
+                | _ -> raise (Decoding_error "ber_primitive, decoder bug")); (* value is primative *)
+           ber_tag = ber_tag;
+           ber_length = ber_length})
+       (fun e -> fail e)
 
 let encode_ber_header {ber_class=cls;ber_primitive=pri;ber_tag=tag;ber_length=len} =
   let buf = Buffer.create 3 in
@@ -389,11 +403,11 @@ let encode_ber_header {ber_class=cls;ber_primitive=pri;ber_tag=tag;ber_length=le
 
 let read_contents ?(peek=false) (readbyte:readbyte) len =
   let rec readuntileoc (readbyte:readbyte) buf =
-    let octet1 = (readbyte ~peek 1).[0] in
+    read_char ~peek readbyte >>= fun octet1 ->
       if (int_of_char octet1) = 0b0000_0000 then
-        let octet2 = (readbyte ~peek 1).[0] in
+        read_char ~peek readbyte >>= fun octet2 ->
           if (int_of_char octet2) = 0b0000_0000 then
-            Buffer.contents buf
+            return (Buffer.contents buf)
           else
             (Buffer.add_char buf octet1;Buffer.add_char buf octet2;
              readuntileoc readbyte buf)
@@ -401,26 +415,29 @@ let read_contents ?(peek=false) (readbyte:readbyte) len =
         (Buffer.add_char buf octet1;readuntileoc readbyte buf)
   in
     match len with
-        Definite n -> if n = 0 then "" else readbyte ~peek n
+        Definite n -> if n = 0 then return "" else readbyte ~peek n
       | Indefinite -> readuntileoc readbyte (Buffer.create 5)
 
 let decode_ber_end_of_contents ?(peek=false) (readbyte:readbyte) =
-  if not (((int_of_char (readbyte ~peek 1).[0]) = 0) &&
-          (int_of_char (readbyte ~peek 1).[0]) = 0) then
-    raise (Decoding_error "missing end of contents octets")
+  read_octet ~peek readbyte >>= fun o1 ->
+    if o1 <> 0 then fail (Decoding_error "missing end of contents octets")
+    else
+      read_octet ~peek readbyte >>= fun o2 ->
+        if o2 <> 0 then fail (Decoding_error "missing end of contents octets")
+        else return ()
 
 (* sec. 8.2 *)
 let decode_ber_bool ?(peek=false) ?(cls=Universal) ?(tag=1) ?(contents=None)
   (readbyte:readbyte) =
   let decode_ber_bool' contents =
-    if (int_of_char contents.[0]) = 0 then false else true
+    if (int_of_char contents.[0]) = 0 then return false else return true
   in
     match contents with
         None ->
-          (match decode_ber_header ~peek:peek readbyte with
+          (decode_ber_header ~peek:peek readbyte >>= function
                {ber_class=c;ber_tag=t;ber_length=bool_length} when c=cls && t=tag ->
-                 decode_ber_bool' (read_contents ~peek:peek readbyte bool_length)
-             | _ -> raise (Decoding_error "expected bool"))
+                 (read_contents ~peek:peek readbyte bool_length) >>= decode_ber_bool'
+             | _ -> fail (Decoding_error "expected bool"))
       | Some contents -> decode_ber_bool' contents
 
 let encode_ber_bool ?(cls=Universal) ?(tag=1) value =
@@ -439,7 +456,7 @@ let decode_ber_int32 ?(peek=false) ?(cls=Universal) ?(tag=2) ?(contents=None)
   let decode_ber_int32' contents =
     let length = String.length contents in
       if length > 5 then
-        raise (Decoding_error "integer overflow, use bigger decode function?")
+        fail (Decoding_error "integer overflow, use bigger decode function?")
       else if length > 0 then
         let c i = Int32.of_int (int_of_char i) in
         let rec convert octets l i v =
@@ -453,19 +470,17 @@ let decode_ber_int32 ?(peek=false) ?(cls=Universal) ?(tag=2) ?(contents=None)
             (* the number should be negative, fix it. For a less than
                4 byte encoding, we need to set all the bits left of the data to
                1. This operation will have no effect on a 4 byte encoding *)
-            (Int32.logor
-               (Int32.shift_left (-1l) (length * 8))
-               v)
+            return (Int32.logor (Int32.shift_left (-1l) (length * 8)) v)
           else
-            v
-      else raise (Decoding_error "integer, no contents octets") (* sec 8.3.1 *)
+            return v
+      else fail (Decoding_error "integer, no contents octets") (* sec 8.3.1 *)
   in
     match contents with
         None -> (* we have not yet read the header, and unpacked the contents *)
-          (match decode_ber_header ~peek:peek readbyte with
+          (decode_ber_header ~peek:peek readbyte >>= function
                {ber_class=c;ber_tag=t;ber_length=int_length} when c=cls && t=tag ->
-                 decode_ber_int32' (read_contents ~peek:peek readbyte int_length)
-             | _ -> raise (Decoding_error "expected int"))
+                 (read_contents ~peek:peek readbyte int_length) >>= decode_ber_int32'
+             | _ -> fail (Decoding_error "expected int"))
       | Some contents -> decode_ber_int32' contents (* we already have the contents *)
 
 let encode_ber_int32 ?(cls=Universal) ?(tag=2) value =
@@ -631,11 +646,11 @@ let decode_ber_octetstring ?(peek=false) ?(cls=Universal) ?(tag=4) ?(contents=No
   (readbyte:readbyte) =
   match contents with
       None -> (* have not yet read the header, or unpacked the contents *)
-        (match decode_ber_header readbyte with
+        (decode_ber_header readbyte >>= function
              {ber_class=c;ber_tag=t;ber_length=octetstring_length} when c=cls && t=tag ->
                read_contents ~peek readbyte octetstring_length
-           | _ -> raise (Decoding_error "expected octetstring"))
-    | Some contents -> contents
+           | _ -> fail (Decoding_error "expected octetstring"))
+    | Some contents -> return contents
 
 let encode_ber_octetstring ?(cls=Universal) ?(tag=4) string =
   let len = String.length string in
@@ -657,14 +672,14 @@ let encode_ber_null ?(cls=Universal) ?(tag=5) () =
 
 let decode_ber_null ?(peek=false) ?(cls=Universal) ?(tag=5) ?(contents=None)
   (readbyte:readbyte) =
-  let decode_ber_null' contents = () in
+  let decode_ber_null' contents = return () in
     match contents with
         None ->
-          (match decode_ber_header ~peek:peek readbyte with
+          (decode_ber_header ~peek:peek readbyte >>= function
                {ber_class=c; ber_tag=t; ber_length=l}
                  when c=cls && t=tag && l=Definite 0 ->
                    decode_ber_null' None
-             | _ -> raise (Decoding_error "expected null"))
+             | _ -> fail (Decoding_error "expected null"))
       | Some contents -> decode_ber_null' contents
 
 let rec encode_berval_list ?(buf=Buffer.create 50) efun lst =
@@ -678,12 +693,12 @@ let rec encode_berval_list ?(buf=Buffer.create 50) efun lst =
     | [] -> Buffer.contents buf
 
 let rec decode_berval_list ?(lst=[]) dfun (readbyte:readbyte) =
-  let res =
-    try Some (dfun readbyte)
-    with Readbyte_error End_of_stream -> None
-  in
-    match res with
-        Some item -> decode_berval_list ~lst:(item :: lst) dfun readbyte
-      | None -> lst
+  (catch
+     (fun () -> dfun readbyte >|= (fun x -> Some x))
+     (function Readbyte_error End_of_stream -> return None
+        | exn -> fail exn)) >>= fun res ->
+  match res with
+      Some item -> decode_berval_list ~lst:(item :: lst) dfun readbyte
+    | None -> return lst
 
 end

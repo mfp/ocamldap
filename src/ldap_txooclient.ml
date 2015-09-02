@@ -1,4 +1,5 @@
-module Make (M : Ldap_types.Monad) = struct
+
+module M = Ldap_conc.Id
 
 module Ldap_mutex = Ldap_mutex.Make(M)
 open Ldap_mutex
@@ -185,6 +186,4 @@ object (self)
            modified_entry#flush_changes
          with exn -> raise (Txn_rollback_failure ("rollback failed", exn)))
       txn.entries
-end
-
 end

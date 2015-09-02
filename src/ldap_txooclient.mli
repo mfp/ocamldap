@@ -1,6 +1,7 @@
-module Make : functor (M : Ldap_types.Monad) -> sig
 
 open Ldap_ooclient
+
+module M = Ldap_conc.Id
 
 (** the abstract type of a transaction *)
 type txn
@@ -75,4 +76,3 @@ class ldapadvisorytxcon :
     method rollback_txn : txn -> unit
   end
 
-end

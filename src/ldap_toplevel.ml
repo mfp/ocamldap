@@ -35,6 +35,10 @@ eval "#install_printer Ldap_schema.format_schema;;";;
 
 module Make (M : Ldap_types.Monad) = struct
 
+open M
+let (>>=) = bind
+let (>|=) t f = bind t (fun x -> return (f x))
+
 module Ldap_ooclient = Ldap_ooclient.Make(M)
 open Ldap_ooclient
 open Ldap_types
@@ -44,12 +48,13 @@ open Ldap_schema
 
 let ldap_cmd_harness ~h ~d ~w f =
   let ldap = new ldapcon [h] in
-    try
-      ldap#bind d ~cred:w;
-      let res = f ldap in
-        ldap#unbind;
-        res
-    with exn -> ldap#unbind;raise exn
+    catch
+      (fun () ->
+         ldap#bind d ~cred:w >>= fun () ->
+         f ldap >>= fun res ->
+           ldap#unbind >>= fun () ->
+           return res)
+      (function exn -> ldap#unbind >>= fun () -> fail exn)
 
 let ldapsearch ?(s=`SUBTREE) ?(a=[]) ?(b="") ?(d="") ?(w="") ~h filter =
   ldap_cmd_harness ~h ~d ~w
@@ -58,17 +63,21 @@ let ldapsearch ?(s=`SUBTREE) ?(a=[]) ?(b="") ?(d="") ?(w="") ~h filter =
          ~base:b ~scope:s
          ~attrs:a filter)
 
+let rec iter_s f = function
+  | [] -> return ()
+  | x :: tl -> f x >>= fun () -> iter_s f tl
+
 let ldapmodify ~h ~d ~w mods =
   ldap_cmd_harness ~h ~d ~w
     (fun ldap ->
-       List.iter
+       iter_s
          (fun (dn, ldmod) -> ldap#modify dn ldmod)
          mods)
 
 let ldapadd ~h ~d ~w entries =
   ldap_cmd_harness ~h ~d ~w
     (fun ldap ->
-       List.iter
+       iter_s
          (fun entry -> ldap#add entry)
          entries)
 
