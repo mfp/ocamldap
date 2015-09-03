@@ -18,6 +18,7 @@ Library "ldap"
     Ldap_filterlexer,
     Lber,
     Ldap_protocol,
+    Ldap_conc,
     Ldap_dn,
     Ldap_dnparser,
     Ldap_dnlexer,
