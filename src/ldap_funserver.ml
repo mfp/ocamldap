@@ -346,7 +346,7 @@ let run si =
           si.si_log `CONNECTION (sprintf "conn=%d fd=0 closed" conn_id)
     else (* a new connection has come in, accept it *)
       let (newfd, sockaddr) = accept fd in
-      let rb = readbyte_of_fd newfd in
+      let rb = Ldap_conc.readbyte_of_unix_fd newfd in
       let connid = allocate_connection_id si in
         Hashtbl.add si.si_client_sockets newfd (connid, 0, [], rb);
         si.si_log `CONNECTION

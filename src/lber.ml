@@ -29,13 +29,6 @@ let (>|=) t f = bind t (fun x -> return (f x))
 exception Decoding_error of string
 exception Encoding_error of string
 
-type readbyte_error = End_of_stream
-                      | Transport_error
-                      | Peek_error
-                      | Request_too_large
-                      | Not_implemented
-exception Readbyte_error of readbyte_error
-
 (* our sole interface with the data is to read and write a byte.
    the user of the encodeing functions herin will pass a function
    of the type readbyte, or writebyte to us when the encoding function
@@ -93,12 +86,12 @@ let readbyte_of_ber_element limit (rb:readbyte) =
                 byte_counter := !byte_counter + length;
                 rb length
               )
-              else fail (Readbyte_error End_of_stream)
+              else fail (Ldap_types.Readbyte_error End_of_stream)
             else if !peek_counter + length <= limit && !byte_counter < limit then (
               peek_counter := !peek_counter + length;
               rb ~peek:true length
             )
-            else fail (Readbyte_error End_of_stream)
+            else fail (Ldap_types.Readbyte_error End_of_stream)
           in
             f
       | Indefinite ->
@@ -130,7 +123,7 @@ let readbyte_of_ber_element limit (rb:readbyte) =
                eoc_buf)
           in
             f *)
-          raise (Readbyte_error Not_implemented)
+          raise (Ldap_types.Readbyte_error Not_implemented)
 
 (* return a readbyte implementation which works using a string *)
 let readbyte_of_string octets =
@@ -159,133 +152,8 @@ let readbyte_of_string octets =
   in
     f
 *)
-  raise (Readbyte_error Not_implemented)
+  raise (Ldap_types.Readbyte_error Not_implemented)
 
-let readbyte_of_readfun rfun =
-  let bufsize = 16384 in (* must be this for ssl *)
-  let buf = String.create (bufsize * 2) in
-  let buf_len = ref 0 in
-  let buf_pos = ref 0 in
-  let peek_pos = ref 0 in
-  let peek_buf_len = ref 0 in
-  let read buf off len =
-    try rfun buf off len
-    with exn -> raise (Readbyte_error Transport_error)
-  in
-  let read_at_least_nbytes buf off len nbytes =
-    let total = ref 0 in
-      while !total < nbytes
-      do
-        let rd = read buf (!total + off) (len - !total) in
-          if rd <= 0 then
-            raise (Readbyte_error Transport_error);
-          total := !total + rd;
-      done;
-      !total
-  in
-  let rec rb ?(peek=false) length =
-    if length <= 0 then raise (Invalid_argument "Readbyte.length");
-    if length > bufsize then (
-      if length > Sys.max_string_length then raise (Readbyte_error Request_too_large);
-      let result = String.create length in
-      let total = ref 0 in
-        while !total < length
-        do
-          let nbytes_to_read =
-            if length - !total < bufsize then
-              length - !total
-            else bufsize
-          in
-          let iresult = rb ~peek nbytes_to_read in
-            String.blit iresult 0 result !total nbytes_to_read;
-            total := !total + nbytes_to_read
-        done;
-        result
-    )
-    else if not peek then (
-      if length <= !buf_len - !buf_pos then (
-        let result = String.sub buf !buf_pos length in
-          buf_pos := !buf_pos + length;
-          peek_pos := !buf_pos;
-          result
-      )
-      else (
-        let result = String.create length in
-        let nbytes_really_in_buffer = (!buf_len - !buf_pos) + !peek_buf_len in
-        let nbytes_in_buffer =
-          if nbytes_really_in_buffer > length then length
-          else nbytes_really_in_buffer
-        in
-        let nbytes_to_read = length - nbytes_in_buffer in
-          if nbytes_in_buffer > 0 then
-            String.blit buf !buf_pos result 0 nbytes_in_buffer;
-          if nbytes_to_read > 0 then (
-            let nbytes_read = read_at_least_nbytes buf 0 bufsize nbytes_to_read in
-              String.blit buf 0 result nbytes_in_buffer nbytes_to_read;
-              buf_pos := nbytes_to_read;
-              buf_len := nbytes_read;
-              peek_pos := !buf_pos;
-              peek_buf_len := 0;
-              result
-          )
-          else (
-            String.blit buf 0 buf (!buf_pos + length) (nbytes_really_in_buffer - length);
-            buf_len := (nbytes_really_in_buffer - length);
-            buf_pos := 0;
-            peek_pos := !buf_pos;
-            peek_buf_len := 0;
-            result
-          )
-      )
-    ) (* if not peek *)
-    else (
-      if length <= (!buf_len + !peek_buf_len) - !peek_pos then (
-        let result = String.sub buf !peek_pos length in
-          peek_pos := !peek_pos + length;
-          result
-      )
-      else (
-        if length + !peek_pos > 2 * bufsize then raise (Readbyte_error Peek_error);
-        let result = String.create length in
-        let nbytes_in_buffer = (!buf_len + !peek_buf_len) - !peek_pos in
-        let nbytes_to_read = length - nbytes_in_buffer in
-        let read_start_pos = !peek_pos + nbytes_in_buffer in
-          String.blit buf !peek_pos result 0 nbytes_in_buffer;
-          let nbytes_read =
-            read_at_least_nbytes buf
-              read_start_pos
-              (bufsize - (!buf_len + !peek_buf_len))
-              nbytes_to_read
-          in
-            String.blit buf read_start_pos result nbytes_in_buffer nbytes_read;
-            peek_buf_len := !peek_buf_len + nbytes_read;
-            peek_pos := !peek_pos + length;
-            result
-      )
-    )
-  in
-    rb
-
-(* a readbyte implementation which reads from an FD. It implements a
-   peek buffer, so it can garentee that it will work with
-   readbyte_of_ber_element, even with blocking fds. *)
-let readbyte_of_fd fd =
-  (* readbyte_of_readfun *)
-    (* (fun buf off len -> *)
-       (* try Unix.read fd buf off len *)
-       (* with exn -> *)
-         (* (try Unix.close fd with _ -> ());raise exn) *)
-  failwith "FIXME"
-
-(* a readbyte implementation which reads from an SSL socket. It is
-   otherwise the same as rb_of_fd *)
-let readbyte_of_ssl fd =
-  failwith "FIXME"
-  (* readbyte_of_readfun *)
-    (* (fun buf off len -> *)
-       (* try Ssl.read fd buf off len *)
-       (* with exn -> *)
-         (* (try Ssl.shutdown fd with _ -> ());raise exn) *)
 
 let read_octet ~peek (rb:readbyte) = rb ~peek 1 >>= fun o -> return (int_of_char o.[0])
 let read_char ~peek (rb:readbyte) = rb ~peek 1 >>= fun o -> return o.[0]
@@ -695,7 +563,7 @@ let rec encode_berval_list ?(buf=Buffer.create 50) efun lst =
 let rec decode_berval_list ?(lst=[]) dfun (readbyte:readbyte) =
   (catch
      (fun () -> dfun readbyte >|= (fun x -> Some x))
-     (function Readbyte_error End_of_stream -> return None
+     (function Ldap_types.Readbyte_error End_of_stream -> return None
         | exn -> fail exn)) >>= fun res ->
   match res with
       Some item -> decode_berval_list ~lst:(item :: lst) dfun readbyte

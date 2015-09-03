@@ -409,55 +409,55 @@ object (self)
   val mutable bound = true
   val mutable reconnect_successful = true
   val mutable con = init ~connect_timeout:connect_timeout ~version:version hosts
+
   method private reconnect =
-    (if bound then unbind con else return ()) >>= fun () ->
-    bound <- false;
+    (if bound then con >>= unbind else return ()) >>= fun () ->
     reconnect_successful <- false;
-    con <- init ~connect_timeout:connect_timeout ~version:version hosts;
     bound <- true;
-    bind_s ~who: bdn ~cred: pwd ~auth_method: mth con >>= fun () ->
+    con <- init ~connect_timeout:connect_timeout ~version:version hosts;
+    con >>= bind_s ~who: bdn ~cred: pwd ~auth_method: mth >>= fun () ->
     reconnect_successful <- true;
     return ()
 
-  method private retry_after_reconnect : 'a. (unit -> 'a M.t) -> 'a M.t = fun f ->
+  method private retry_after_reconnect : 'a. (_ -> 'a M.t) -> 'a M.t = fun f ->
     (if not (reconnect_successful && bound) then self#reconnect else return ()) >>= fun () ->
     catch
-      f
+      (fun () -> con >>= f)
       (function
          | LDAP_Failure(`SERVER_DOWN, _, _) -> self#reconnect >>= fun () -> self#retry_after_reconnect f
          | exn -> fail exn)
 
   method unbind =
-    if bound then (unbind con >|= fun () -> bound <- false) else return ()
+    if bound then (con >>= unbind >|= fun () -> bound <- false) else return ()
 
   method update_entry (e:ldapentry) : unit M.t =
     self#retry_after_reconnect
-      (fun () -> self#modify e#dn (List.rev e#changes) >|= fun () -> e#flush_changes)
+      (fun con -> self#modify e#dn (List.rev e#changes) >|= fun () -> e#flush_changes)
 
   method bind ?(cred = "") ?(meth:authmethod = `SIMPLE) dn =
     if not bound then begin
       con <- init ~connect_timeout:connect_timeout ~version: version hosts;
       bound <- true
     end;
-    bind_s ~who: dn ~cred: cred ~auth_method: meth con >|= fun () ->
+    con >>= bind_s ~who: dn ~cred: cred ~auth_method: meth >|= fun () ->
     reconnect_successful <- true;
     bdn <- dn; pwd <- cred; mth <- meth
 
   method add (entry: ldapentry) =
     self#retry_after_reconnect
-      (fun () -> add_s con (of_entry entry))
+      (fun con -> add_s con (of_entry entry))
 
   method delete dn =
     self#retry_after_reconnect
-      (fun () -> delete_s con dn)
+      (fun con -> delete_s con dn)
 
   method modify dn mods =
     self#retry_after_reconnect
-      (fun () -> modify_s con dn mods)
+      (fun con -> modify_s con dn mods)
 
   method modrdn dn ?(deleteoldrdn = true) ?(newsup: string option=None) newrdn =
     self#retry_after_reconnect
-      (fun () -> modrdn_s con ~dn ~newdn:newrdn ~deleteoldrdn ~newsup)
+      (fun con -> modrdn_s con ~dn ~newdn:newrdn ~deleteoldrdn ~newsup)
 
   method search
     ?(scope = `SUBTREE)
@@ -468,7 +468,7 @@ object (self)
     ?(timelimit = 0l)
     filter =
     self#retry_after_reconnect
-      (fun () ->
+      (fun con ->
         (search_s
            ~scope ~base ~attrs
            ~attrsonly ~sizelimit
@@ -509,7 +509,7 @@ object (self)
                     {ext_matched_dn = ""; ext_referral = None}))
     in
       self#retry_after_reconnect
-        (fun () ->
+        (fun con ->
            let first_entry = ref `No in
            let msgid =
              search
@@ -530,7 +530,7 @@ object (self)
 
   method schema =
     self#retry_after_reconnect
-      (fun () ->
+      (fun con ->
          if version <> 3 then fail Not_found
          else
            let schema_base =
@@ -558,7 +558,7 @@ object (self)
 
   method rawschema =
     self#retry_after_reconnect
-      (fun () ->
+      (fun con ->
          if version <> 3 then fail Not_found
          else
            let schema_base =

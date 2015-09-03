@@ -28,13 +28,6 @@ module Make : functor (M : Ldap_types.Monad) -> sig
 exception Decoding_error of string
 exception Encoding_error of string
 
-type readbyte_error = End_of_stream
-                      | Transport_error
-                      | Peek_error
-                      | Request_too_large
-                      | Not_implemented
-exception Readbyte_error of readbyte_error
-
 type readbyte = ?peek:bool -> int -> string M.t
 type writebyte = char -> unit
 type ber_class = Universal | Application | Context_specific | Private
@@ -59,19 +52,6 @@ val readbyte_of_string : string -> readbyte
 
     @raise Readbyte_error in the event of a an io error, or the end of file *)
 val readbyte_of_ber_element : ber_length -> readbyte -> readbyte
-
-(** a readbyte implementation which reads from an FD. It implements a
-    peek buffer, so it can garentee that it will work with
-    rb_of_ber_element, even with blocking fds.
-
-    @raise Readbyte_error in the event of a an io error, or the end of file *)
-val readbyte_of_fd: Unix.file_descr -> readbyte
-
-(** a readbyte implementation which reads from an SSL socket. It is
-    otherwise the same as readbyte_of_fd.
-
-    @raise Readbyte_error in the event of a an io error, or the end of file *)
-val readbyte_of_ssl: Ssl.socket -> readbyte
 
 (** decoding and encoding of the ber header *)
 val decode_ber_header : ?peek:bool -> readbyte -> ber_val_header M.t

@@ -310,8 +310,21 @@ type ldap_grouping_type = [ `LDAP_GROUP_TXN ]
     group *)
 type ldap_grouping_cookie
 
+type readbyte_error = End_of_stream
+                      | Transport_error
+                      | Peek_error
+                      | Request_too_large
+                      | Not_implemented
+exception Readbyte_error of readbyte_error
+
 module type Monad = sig
   type +'a t
+
+  (* our sole interface with the data is to read and write a byte.
+     the user of the encodeing functions herin will pass a function
+     of the type readbyte, or writebyte to us when the encoding function
+     is called. We will use that function to get or set raw data *)
+  type readbyte = ?peek:bool -> int -> string t
 
   val return : 'a -> 'a t
   val bind : 'a t -> ('a -> 'b t) -> 'b t
@@ -320,6 +333,21 @@ module type Monad = sig
 
   val finalize : (unit -> 'a t) -> (unit -> unit t) -> 'a t
 
+  module IO : sig
+    type input_channel
+    type output_channel
+
+    val connect :
+      [`SSL | `PLAIN ] -> connect_timeout:int ->
+      Unix.inet_addr -> int ->
+      (input_channel * output_channel) option t
+
+    val close_out : output_channel -> unit t
+    val close_in : input_channel -> unit t
+
+    val readbyte_of_input_channel : input_channel -> readbyte
+    val write : output_channel -> string -> unit t
+  end
   (* module type Unix = sig *)
     (* type file_descr *)
     (* type sockaddr *)

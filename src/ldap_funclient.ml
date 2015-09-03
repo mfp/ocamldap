@@ -29,12 +29,9 @@ module Ldap_protocol = Ldap_protocol.Make(M)
 
 type msgid = Int32.t
 
-type ld_socket = Ssl of Ssl.socket
-                 | Plain of Unix.file_descr
-
 type conn = {
-  mutable rb: Lber.readbyte;
-  mutable socket: ld_socket; (* communications channel to the ldap server *)
+  rb: Lber.readbyte;
+  channels: (M.IO.input_channel * M.IO.output_channel);
   mutable current_msgid: Int32.t; (* the largest message id allocated so far *)
   pending_messages: (int32, Ldap_types.ldap_message Queue.t) Hashtbl.t;
   protocol_version: int;
@@ -55,8 +52,6 @@ type page_control =
 
 let ext_res = {Ldap_types.ext_matched_dn="";
                ext_referral=None}
-
-let _ = Ssl.init ()
 
 (* limits us to Int32.max_int active async operations
    at any one time *)
@@ -82,34 +77,19 @@ let free_messageid con msgid =
 
 (* send an ldapmessage *)
 let send_message con msg : unit M.t =
-  failwith "FIXME"
-  (* let write ld_socket buf off len = *)
-    (* match ld_socket with *)
-        (* Ssl s -> *)
-          (* (try Ssl.write s buf off len *)
-           (* with Ssl.Write_error _ -> raise (Unix.Unix_error (Unix.EPIPE, "Ssl.write", ""))) *)
-      (* | Plain s -> Unix.write s buf off len *)
-  (* in *)
-  (* let e_msg = Ldap_protocol.encode_ldapmessage msg in *)
-  (* let len = String.length e_msg in *)
-  (* let written = ref 0 in *)
-    (* try *)
-      (* while !written < len *)
-      (* do *)
-        (* written := *)
-          (* ((write con.socket e_msg !written (len - !written)) + !written) *)
-      (* done *)
-    (* with *)
-        (* Unix.Unix_error (Unix.EBADF, _, _) *)
-      (* | Unix.Unix_error (Unix.EPIPE, _, _) *)
-      (* | Unix.Unix_error (Unix.ECONNRESET, _, _) *)
-      (* | Unix.Unix_error (Unix.ECONNABORTED, _, _) *)
-      (* | _ -> *)
-          (* (raise *)
-             (* (Ldap_types.LDAP_Failure *)
-                (* (`SERVER_DOWN, *)
-                 (* "the connection object is invalid, data cannot be written", *)
-                 (* ext_res))) *)
+  catch
+    (fun () -> M.IO.write (snd con.channels) (Ldap_protocol.encode_ldapmessage msg))
+    (function
+         Unix.Unix_error (Unix.EBADF, _, _)
+       | Unix.Unix_error (Unix.EPIPE, _, _)
+       | Unix.Unix_error (Unix.ECONNRESET, _, _)
+       | Unix.Unix_error (Unix.ECONNABORTED, _, _)
+       | _ ->
+           (fail
+              (Ldap_types.LDAP_Failure
+                 (`SERVER_DOWN,
+                  "the connection object is invalid, data cannot be written",
+                  ext_res))))
 
 (* recieve an ldapmessage for a particular message id (messages for
    all other ids will be read and queued. They can be retreived later) *)
@@ -132,9 +112,9 @@ let receive_message con msgid =
         read_message con msgid
       else return (Queue.take q)
     with
-        Lber.Readbyte_error Lber.Transport_error ->
+        Ldap_types.Readbyte_error Ldap_types.Transport_error ->
           raise (Ldap_types.LDAP_Failure (`SERVER_DOWN, "read error", ext_res))
-      | Lber.Readbyte_error Lber.End_of_stream ->
+      | Ldap_types.Readbyte_error Ldap_types.End_of_stream ->
           raise (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "bug in ldap decoder detected", ext_res))
 
 let receive_message con msgid =
@@ -143,82 +123,45 @@ let receive_message con msgid =
     (fun exn -> fail exn)
 
 let init ?(connect_timeout = 1) ?(version = 3) hosts =
-  (* FIXME *)
   if ((version < 2) || (version > 3)) then
-    raise (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid protocol version", ext_res))
+    fail (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid protocol version", ext_res))
   else
-    let fd =
-      let addrs =
-        (List.flatten
-           (List.map
-              (fun (mech, host, port) ->
-                 try
-                   (List.rev_map
-                      (fun addr -> (mech, addr, port))
-                      (Array.to_list ((Unix.gethostbyname host).Unix.h_addr_list)))
-                 with Not_found -> [])
-              (List.map
-                 (fun host ->
-                    (match Ldap_url.of_string host with
-                         {Ldap_types.url_mech=mech;url_host=(Some host);url_port=(Some port)} ->
-                           (mech, host, int_of_string port)
-                       | {Ldap_types.url_mech=mech;url_host=(Some host);url_port=None} ->
-                           (mech, host, 389)
-                       | _ -> raise
-                           (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid ldap url", ext_res))))
-                 hosts)))
-      in
-      let rec open_con addrs =
-        let previous_signal = ref Sys.Signal_default in
-          match addrs with
-              (mech, addr, port) :: tl ->
-                (try
-                   if mech = `PLAIN then
-                     let s = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
-                       try
-                         previous_signal :=
-                           Sys.signal Sys.sigalrm
-                             (Sys.Signal_handle (fun _ -> failwith "timeout"));
-                         ignore (Unix.alarm connect_timeout);
-                         Unix.connect s (Unix.ADDR_INET (addr, port));
-                         ignore (Unix.alarm 0);
-                         Sys.set_signal Sys.sigalrm !previous_signal;
-                         Plain s
-                       with exn -> Unix.close s;raise exn
-                   else
-                     (previous_signal :=
-                        Sys.signal Sys.sigalrm
-                          (Sys.Signal_handle (fun _ -> failwith "timeout"));
-                      ignore (Unix.alarm connect_timeout);
-                      let ssl = Ssl (Ssl.open_connection
-                                       Ssl.SSLv23
-                                       (Unix.ADDR_INET (addr, port)))
-                      in
-                        ignore (Unix.alarm 0);
-                        Sys.set_signal Sys.sigalrm !previous_signal;
-                        ssl)
-                 with
-                     Unix.Unix_error (Unix.ECONNREFUSED, _, _)
-                   | Unix.Unix_error (Unix.EHOSTDOWN, _, _)
-                   | Unix.Unix_error (Unix.EHOSTUNREACH, _, _)
-                   | Unix.Unix_error (Unix.ECONNRESET, _, _)
-                   | Unix.Unix_error (Unix.ECONNABORTED, _, _)
-                   | Ssl.Connection_error _
-                   | Failure "timeout" ->
-                       ignore (Unix.alarm 0);
-                       Sys.set_signal Sys.sigalrm !previous_signal;
-                       open_con tl)
-            | [] -> raise (Ldap_types.LDAP_Failure (`SERVER_DOWN, "", ext_res))
-      in
-        open_con addrs
+    let addrs =
+      (List.flatten
+         (List.map
+            (fun (mech, host, port) ->
+               try
+                 (List.rev_map
+                    (fun addr -> (mech, addr, port))
+                    (* FIXME: should use non-block resolution in the M monad *)
+                    (Array.to_list ((Unix.gethostbyname host).Unix.h_addr_list)))
+               with Not_found -> [])
+            (List.map
+               (fun host ->
+                  (match Ldap_url.of_string host with
+                       {Ldap_types.url_mech=mech;url_host=(Some host);url_port=(Some port)} ->
+                         (mech, host, int_of_string port)
+                     | {Ldap_types.url_mech=mech;url_host=(Some host);url_port=None} ->
+                         (mech, host, 389)
+                     | _ -> raise
+                         (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid ldap url", ext_res))))
+               hosts))) in
+
+    let rec open_con = function
+      | [] -> fail (Ldap_types.LDAP_Failure (`SERVER_DOWN, "", ext_res))
+      | (mech, addr, port) :: tl ->
+          M.IO.connect mech ~connect_timeout addr port >>= function
+            | None -> open_con tl
+            | Some (ic, oc) ->
+                return
+                { rb= M.IO.readbyte_of_input_channel ic;
+                  channels = (ic, oc);
+                  current_msgid=1l;
+                  pending_messages=(Hashtbl.create 3);
+                  protocol_version=version
+                }
     in
-      {rb=(match fd with
-               Ssl s -> Lber.readbyte_of_ssl s
-             | Plain s -> Lber.readbyte_of_fd s);
-       socket=fd;
-       current_msgid=1l;
-       pending_messages=(Hashtbl.create 3);
-       protocol_version=version}
+      open_con addrs
 
 (* sync auth_method types between the two files *)
 let bind_s ?(who = "") ?(cred = "") ?(auth_method = `SIMPLE) con =
@@ -379,12 +322,8 @@ let delete_s con ~dn =
     (fun () -> free_messageid con msgid)
 
 let unbind con =
-  failwith "FIXME"
-  (* try *)
-    (* (match con.socket with *)
-         (* Ssl s -> Ssl.shutdown s *)
-       (* | Plain s -> Unix.close s) *)
-  (* with _ -> () *)
+  M.IO.close_out (snd con.channels) >>= fun () ->
+  M.IO.close_in (fst con.channels)
 
 let modify_s con ~dn ~mods =
   let rec convertmods ?(converted=[]) mods =
