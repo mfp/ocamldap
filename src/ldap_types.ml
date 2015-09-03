@@ -350,17 +350,4 @@ module type Monad = sig
     val readbyte_of_input_channel : input_channel -> readbyte
     val write : output_channel -> string -> unit t
   end
-  (* module type Unix = sig *)
-    (* type file_descr *)
-    (* type sockaddr *)
-    (* type socket_domain *)
-    (* type socket_type *)
-
-    (* val close : file_descr -> unit t *)
-    (* val read : file_descr -> string -> int -> int -> int t *)
-    (* val write : file_descr -> string -> int -> int -> int t *)
-
-    (* val connect : file_descr -> sockaddr -> unit t *)
-    (* val socket : socket_domain -> socket_type -> int -> file_descr *)
-  (* end *)
 end
