@@ -161,6 +161,8 @@ struct
     try let x = f () in g (); x
     with exn -> g (); raise exn
 
+  let sleep dt = ignore (Unix.select [] [] [] dt)
+
   module IO =
   struct
 

@@ -334,6 +334,8 @@ module type Monad = sig
 
   val finalize : (unit -> 'a t) -> (unit -> unit t) -> 'a t
 
+  val sleep : float -> unit t
+
   module IO : sig
     type input_channel
     type output_channel

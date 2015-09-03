@@ -63,9 +63,7 @@ let rec lock (ldap:ldapcon) mutexdn lockval =
                  LDAP_Failure (`TYPE_OR_VALUE_EXISTS, _, _)
                | LDAP_Failure (`OBJECT_CLASS_VIOLATION, _, _) ->
                    (* this is so evil *)
-                   (* FIXME *)
-                   ignore (Unix.select [] [] [] 0.25); (* wait 1/4 of a second *)
-                   return ()
+                   sleep 0.25
                | exn -> fail exn) >>= fun () ->
            loop ()
         in
