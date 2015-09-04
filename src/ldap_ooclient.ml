@@ -408,13 +408,15 @@ object (self)
   val mutable mth = `SIMPLE
   val mutable bound = true
   val mutable reconnect_successful = true
-  val mutable con = init ~connect_timeout:connect_timeout ~version:version hosts
+  val mutable con = catch
+                      (fun () -> init ~connect_timeout:connect_timeout ~version:version hosts)
+                      fail
 
   method private reconnect =
-    (if bound then con >>= unbind else return ()) >>= fun () ->
+    catch (fun () -> if bound then con >>= unbind else return ()) (fun _ -> return ()) >>= fun () ->
     reconnect_successful <- false;
     bound <- true;
-    con <- init ~connect_timeout:connect_timeout ~version:version hosts;
+    con <- catch (fun () -> init ~connect_timeout:connect_timeout ~version:version hosts) fail;
     con >>= bind_s ~who: bdn ~cred: pwd ~auth_method: mth >>= fun () ->
     reconnect_successful <- true;
     return ()
@@ -436,7 +438,9 @@ object (self)
 
   method bind ?(cred = "") ?(meth:authmethod = `SIMPLE) dn =
     if not bound then begin
-      con <- init ~connect_timeout:connect_timeout ~version: version hosts;
+      con <- catch
+               (fun () -> init ~connect_timeout:connect_timeout ~version: version hosts)
+               fail;
       bound <- true
     end;
     con >>= bind_s ~who: dn ~cred: cred ~auth_method: meth >|= fun () ->
@@ -539,7 +543,8 @@ object (self)
                 ~scope: `BASE
                 ~attrs: ["subschemasubentry"]
                 "(objectclass=*)") >>= function
-              | [e] -> return (List.hd (e#get_value "subschemasubentry"))
+              | [e] ->
+                catch (fun () -> return (List.hd (e#get_value "subschemasubentry"))) fail
               |  _  -> fail Not_found
            in schema_base >>= fun schema_base ->
               ((self#search
@@ -567,7 +572,8 @@ object (self)
                 ~scope: `BASE
                 ~attrs: ["subschemasubentry"]
                 "(objectclass=*)") >>= function
-              | [e] -> return (List.hd (e#get_value "subschemasubentry"))
+              | [e] ->
+                  catch (fun () -> return (List.hd (e#get_value "subschemasubentry"))) fail
               |  _  -> fail Not_found
            in schema_base >>= fun schema_base ->
             ((self#search

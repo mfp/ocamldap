@@ -108,9 +108,12 @@ let rec unlock (ldap:ldapcon) mutexdn unlockval =
 class mutex ldapurls binddn bindpw mutexdn =
 object (self)
   val ldap =
-    let ldap = new ldapcon ldapurls in
-      ldap#bind binddn ~cred:bindpw >>= fun () ->
-      return ldap
+    catch begin fun () ->
+      let ldap = new ldapcon ldapurls in
+        ldap#bind binddn ~cred:bindpw >>= fun () ->
+        return ldap
+    end
+    fail
 
   method private addmutex = ldap >>= fun ldap -> addmutex ldap mutexdn
   method lock = ldap >>= fun ldap -> lock ldap mutexdn [(`ADD, "mutexlocked", ["locked"])]
