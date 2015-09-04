@@ -269,22 +269,23 @@ let search_s ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
   ?(sizelimit=0l) ?(timelimit=0l) ?(attrs = []) ?(attrsonly = false) con filter =
   search ~base:base ~scope:scope ~aliasderef:aliasderef ~sizelimit:sizelimit
          ~timelimit:timelimit ~attrs:attrs ~attrsonly:attrsonly con filter >>= fun msgid ->
-  let results = ref [] in
-  let rec loop () =
-    catch
-      (fun () ->
-         get_search_entry con msgid >>= fun result ->
-           results := result :: !results;
-           loop ())
-      (function
-         | Ldap_types.LDAP_Failure (`SUCCESS, _, _) -> return !results
-         | Ldap_types.LDAP_Failure (code, msg, ext) -> fail (Ldap_types.LDAP_Failure (code, msg, ext))
-         | exn ->
-             catch (fun () -> abandon con msgid) (fun _ -> return ()) >>= fun () ->
-             fail exn)
+
+  let rec loop results =
+    begin
+      catch
+        (fun () -> get_search_entry con msgid >|= fun x -> `OK x)
+        (fun exn -> return (`EXN exn))
+    end >>=
+    function
+      | `OK x -> loop (x :: results)
+      | `EXN (Ldap_types.LDAP_Failure (`SUCCESS, _, _)) -> return results
+      | `EXN (Ldap_types.LDAP_Failure (code, msg, ext)) -> fail (Ldap_types.LDAP_Failure (code, msg, ext))
+      | `EXN exn ->
+          catch (fun () -> abandon con msgid) (fun _ -> return ()) >>= fun () ->
+          fail exn
   in
     finalize
-      (fun () -> loop ())
+      (fun () -> loop [])
       (fun () -> free_messageid con msgid)
 
 let add_s con (entry: entry) =
