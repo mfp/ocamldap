@@ -25,16 +25,17 @@ end
 
 let addmutex ldap mutexdn =
   let mt = new ldapentry in
-  let mtrdn = List.hd (Ldap_dn.of_string mutexdn) in
-    mt#set_dn mutexdn;
-
-
-
-    mt#add [("objectclass", ["top";"mutex"]);
-            (mtrdn.attr_type, mtrdn.attr_vals)];
     catch
-      (fun () -> ldap#add mt)
-      (fun exn -> fail (Ldap_mutex ("addmutex", exn)))
+      (fun () ->
+         let mtrdn = List.hd (Ldap_dn.of_string mutexdn) in
+           mt#set_dn mutexdn;
+
+           mt#add [("objectclass", ["top";"mutex"]);
+                   (mtrdn.attr_type, mtrdn.attr_vals)];
+           catch
+             (fun () -> ldap#add mt)
+             (fun exn -> fail (Ldap_mutex ("addmutex", exn))))
+      fail
 
 let rec lock (ldap:ldapcon) mutexdn lockval =
   catch begin fun () ->

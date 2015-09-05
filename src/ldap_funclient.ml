@@ -205,14 +205,14 @@ let search ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
     {Ldap_types.criticality = false;
     Ldap_types.control_details=(`Paged_results_control {Ldap_types.size; Ldap_types.cookie})}
   in
-  let controls = match (page_control) with
-    | `Noctrl -> None
-    | `Initctrl size | `Subctrl (size,_) when size < 1 ->
-      raise (Ldap_types.LDAP_Failure(`LOCAL_ERROR, "invalid page size", ext_res))
-    | `Initctrl size -> Some [(build_res_ctrl size "")]
-    | `Subctrl (size,cookie) -> Some [(build_res_ctrl size cookie)]
-   in
     finalize begin fun () ->
+      let controls = match (page_control) with
+        | `Noctrl -> None
+        | `Initctrl size | `Subctrl (size,_) when size < 1 ->
+          raise (Ldap_types.LDAP_Failure(`LOCAL_ERROR, "invalid page size", ext_res))
+        | `Initctrl size -> Some [(build_res_ctrl size "")]
+        | `Subctrl (size,cookie) -> Some [(build_res_ctrl size cookie)]
+      in
       let e_filter = (try return (Ldap_filter.of_string filter)
                       with _ ->
                         (fail
@@ -233,7 +233,7 @@ let search ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
            controls} >|= fun _ ->
         msgid
     end
-      (fun () -> free_messageid con msgid)
+    (fun () -> free_messageid con msgid)
 
 let get_search_entry con msgid =
   finalize begin fun () ->
