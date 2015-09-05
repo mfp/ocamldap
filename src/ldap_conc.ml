@@ -171,33 +171,30 @@ struct
     type input_channel = fd
     type output_channel = fd
 
-    let connect meth ~connect_timeout addr port =
+    let connect meth ~connect_timeout sockaddr =
       let previous_signal = ref Sys.Signal_default in
         try
           if meth = `PLAIN then
-            let s = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+            let s = Unix.socket (Unix.domain_of_sockaddr sockaddr) Unix.SOCK_STREAM 0 in
               try
                 previous_signal :=
                 Sys.signal Sys.sigalrm
                   (Sys.Signal_handle (fun _ -> failwith "timeout"));
                 ignore (Unix.alarm connect_timeout);
-                Unix.connect s (Unix.ADDR_INET (addr, port));
+                Unix.connect s sockaddr;
                 ignore (Unix.alarm 0);
                 Sys.set_signal Sys.sigalrm !previous_signal;
                 Some (Plain s)
               with exn -> Unix.close s;raise exn
-              else
-                (previous_signal :=
-                 Sys.signal Sys.sigalrm
-                   (Sys.Signal_handle (fun _ -> failwith "timeout"));
-                 ignore (Unix.alarm connect_timeout);
-                 let ssl = Ssl (Ssl.open_connection
-                                  Ssl.SSLv23
-                                  (Unix.ADDR_INET (addr, port)))
-                 in
-                   ignore (Unix.alarm 0);
-                   Sys.set_signal Sys.sigalrm !previous_signal;
-                   Some (ssl))
+          else
+            (previous_signal :=
+             Sys.signal Sys.sigalrm
+               (Sys.Signal_handle (fun _ -> failwith "timeout"));
+             ignore (Unix.alarm connect_timeout);
+             let ssl = Ssl (Ssl.open_connection Ssl.SSLv23 sockaddr) in
+               ignore (Unix.alarm 0);
+               Sys.set_signal Sys.sigalrm !previous_signal;
+               Some (ssl))
        with
            Unix.Unix_error (Unix.ECONNREFUSED, _, _)
          | Unix.Unix_error (Unix.EHOSTDOWN, _, _)
@@ -210,8 +207,8 @@ struct
              Sys.set_signal Sys.sigalrm !previous_signal;
              None
 
-    let connect meth ~connect_timeout addr port =
-      match connect meth ~connect_timeout addr port with
+    let connect meth ~connect_timeout sockaddr =
+      match connect meth ~connect_timeout sockaddr with
         | None -> None
         | Some fd -> let fd = { fd; closed = false } in Some (fd, fd)
 

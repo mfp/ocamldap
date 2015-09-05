@@ -127,30 +127,31 @@ let init ?(connect_timeout = 1) ?(version = 3) hosts =
     fail (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid protocol version", ext_res))
   else
     let addrs =
-      (List.flatten
-         (List.map
-            (fun (mech, host, port) ->
-               try
-                 (List.rev_map
-                    (fun addr -> (mech, addr, port))
-                    (* FIXME: should use non-block resolution in the M monad *)
-                    (Array.to_list ((Unix.gethostbyname host).Unix.h_addr_list)))
-               with Not_found -> [])
-            (List.map
-               (fun host ->
-                  (match Ldap_url.of_string host with
-                       {Ldap_types.url_mech=mech;url_host=(Some host);url_port=(Some port)} ->
-                         (mech, host, int_of_string port)
-                     | {Ldap_types.url_mech=mech;url_host=(Some host);url_port=None} ->
-                         (mech, host, 389)
-                     | _ -> raise
-                         (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid ldap url", ext_res))))
-               hosts))) in
+      List.flatten
+        (List.map
+           (fun (mech, host, port) ->
+              List.map
+                (fun ai -> (mech, ai.Unix.ai_addr))
+                (* FIXME: should use non-block resolution in the M monad *)
+                (Unix.getaddrinfo host (string_of_int port)
+                   (* FIXME: should we support IPv6 (e.g. with optional param
+                    * to init) *)
+                   [Unix.AI_SOCKTYPE Unix.SOCK_STREAM; Unix.AI_FAMILY Unix.PF_INET]))
+                (List.map
+                   (fun host ->
+                      (match Ldap_url.of_string host with
+                           {Ldap_types.url_mech=mech;url_host=(Some host);url_port=(Some port)} ->
+                             (mech, host, int_of_string port)
+                         | {Ldap_types.url_mech=mech;url_host=(Some host);url_port=None} ->
+                             (mech, host, 389)
+                         | _ -> raise
+                                  (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid ldap url", ext_res))))
+                   hosts)) in
 
     let rec open_con = function
       | [] -> fail (Ldap_types.LDAP_Failure (`SERVER_DOWN, "", ext_res))
-      | (mech, addr, port) :: tl ->
-          M.IO.connect mech ~connect_timeout addr port >>= function
+      | (mech, addr) :: tl ->
+          M.IO.connect mech ~connect_timeout addr >>= function
             | None -> open_con tl
             | Some (ic, oc) ->
                 return

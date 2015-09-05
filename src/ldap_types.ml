@@ -341,8 +341,7 @@ module type Monad = sig
 
     val connect :
       [`SSL | `PLAIN ] -> connect_timeout:int ->
-      Unix.inet_addr -> int ->
-      (input_channel * output_channel) option t
+      Unix.sockaddr -> (input_channel * output_channel) option t
 
     val close_out : output_channel -> unit t
     val close_in : input_channel -> unit t
