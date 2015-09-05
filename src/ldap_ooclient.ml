@@ -364,41 +364,56 @@ let of_entry ldapentry =
     {sr_dn=(ldapentry#dn);
      sr_attributes=(extract_attrs ldapentry ldapentry#attributes)}
 
-let iter (f: ldapentry -> unit) (res: ?abandon:bool -> unit -> ldapentry) =
-  try
-    while true
-    do
-      f (res ());
-    done
-  with
-      LDAP_Failure (`SUCCESS, _, _) -> ()
-    | exn -> (try ignore (res ~abandon:true ()) with _ -> ());raise exn
+let iter (f: ldapentry -> unit M.t) (res: ?abandon:bool -> unit -> ldapentry M.t) =
+  let rec loop () =
+    catch
+      (fun () -> res () >>= f >>= fun () -> return `OK)
+      (fun exn -> return (`EXN exn)) >>=
+    function
+      | `OK -> loop ()
+      | `EXN (LDAP_Failure (`SUCCESS, _, _)) -> return ()
+      | `EXN exn ->
+          catch
+            (fun () -> res ~abandon:true () >>= fun _ -> return ())
+            (fun _ -> return ()) >>= fun () ->
+          fail exn
+  in
+    loop ()
 
-let rev_map (f: ldapentry -> 'a) (res: ?abandon:bool -> unit -> ldapentry) =
-  let lst = ref [] in
-    (try while true
-     do
-       lst := (f (res ())) :: !lst
-     done
-     with
-         LDAP_Failure (`SUCCESS, _, _) -> ()
-       | exn -> (try ignore (res ~abandon:true ()) with _ -> ());raise exn);
-    !lst
+let rev_map (f: ldapentry -> 'a M.t) (res: ?abandon:bool -> unit -> ldapentry M.t) =
+  let rec loop acc =
+    catch
+      (fun () -> res () >>= f >>= fun y -> return (`OK y))
+      (fun exn -> return (`EXN exn)) >>=
+    function
+      | `OK y -> loop (y :: acc)
+      | `EXN (LDAP_Failure (`SUCCESS, _, _)) -> return acc
+      | `EXN exn ->
+          catch
+            (fun () -> res ~abandon:true () >>= fun _ -> return ())
+            (fun _ -> return ()) >>= fun () ->
+          fail exn
+  in
+    loop []
 
-let map (f: ldapentry -> 'a) (res: ?abandon:bool -> unit -> ldapentry) =
-  List.rev (rev_map f res)
+let map (f: ldapentry -> 'a M.t) (res: ?abandon:bool -> unit -> ldapentry M.t) =
+  rev_map f res >|= List.rev
 
-let fold (f:ldapentry -> 'a -> 'a) (v:'a) (res: ?abandon:bool -> unit -> ldapentry) =
-  let value = ref v in
-    try
-      while true
-      do
-        value := (f (res ()) !value)
-      done;
-      !value
-    with
-        LDAP_Failure (`SUCCESS, _, _) -> !value
-      | exn -> (try ignore (res ~abandon:true ()) with _ -> ());raise exn
+let fold (f:ldapentry -> 'a -> 'a M.t) (v:'a) (res: ?abandon:bool -> unit -> ldapentry M.t) =
+  let rec loop acc =
+    catch
+      (fun () -> res () >>= fun x -> f x acc >>= fun y -> return (`OK y))
+      (fun exn -> return (`EXN exn)) >>=
+    function
+      | `OK y -> loop y
+      | `EXN (LDAP_Failure (`SUCCESS, _, _)) -> return acc
+      | `EXN exn ->
+          catch
+            (fun () -> res ~abandon:true () >>= fun _ -> return ())
+            (fun _ -> return ()) >>= fun () ->
+          fail exn
+  in
+    loop v
 
 (* a connection to an ldap server *)
 class ldapcon ?(connect_timeout=1) ?(referral_policy=`RETURN) ?(version = 3) hosts =

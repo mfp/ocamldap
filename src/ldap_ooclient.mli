@@ -342,21 +342,21 @@ end
 (** given a source of ldapentry objects (unit -> ldapentry), such as
     the return value of ldapcon#search_a, apply f (first arg) to each entry
     See List.iter *)
-val iter : (ldapentry -> unit) -> (?abandon:bool -> unit -> ldapentry) -> unit
+val iter : (ldapentry -> unit M.t) -> (?abandon:bool -> unit -> ldapentry M.t) -> unit M.t
 
 (** given a source of ldapentry objects (unit -> ldapentry), such as
   the return value of ldapcon#search_a apply f (first arg) to each
   entry in reverse, and return a list containing the result of each
   application. See List.map *)
-val rev_map : (ldapentry -> 'a) -> (?abandon:bool -> unit -> ldapentry) -> 'a list
+val rev_map : (ldapentry -> 'a M.t) -> (?abandon:bool -> unit -> ldapentry M.t) -> 'a list M.t
 
 (** same as rev_map, but does it in order *)
-val map : (ldapentry -> 'a) -> (?abandon:bool -> unit -> ldapentry) -> 'a list
+val map : (ldapentry -> 'a M.t) -> (?abandon:bool -> unit -> ldapentry M.t) -> 'a list M.t
 
 (** given a source of ldapentry objects (unit -> ldapentry), such as
   the return value of ldapcon#search_a compute (f eN ... (f e2 (f e1
   intial))) see List.fold_right. *)
-val fold : (ldapentry -> 'a -> 'a) -> 'a -> (?abandon:bool -> unit -> ldapentry) -> 'a
+val fold : (ldapentry -> 'a -> 'a M.t) -> 'a -> (?abandon:bool -> unit -> ldapentry M.t) -> 'a M.t
 
 (*
 (** {2 Schema Aware ldapentry Derivatives} *)
