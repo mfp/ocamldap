@@ -122,31 +122,41 @@ let receive_message con msgid =
     (fun () -> receive_message con msgid)
     (fun exn -> fail exn)
 
+let map_s f l =
+  let rec map_s f acc = function
+    | [] -> return (List.rev acc)
+    | x :: tl -> f x >>= fun y -> map_s f (y :: acc) tl
+  in
+    map_s f [] l
+
 let init ?(connect_timeout = 1) ?(version = 3) hosts =
   if ((version < 2) || (version > 3)) then
     fail (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid protocol version", ext_res))
   else
+    let hosts =
+      map_s
+        (fun host ->
+           (match Ldap_url.of_string host with
+                {Ldap_types.url_mech=mech;url_host=(Some host);url_port=(Some port)} ->
+                  return (mech, host, int_of_string port)
+              | {Ldap_types.url_mech=mech;url_host=(Some host);url_port=None} ->
+                  return (mech, host, 389)
+              | _ -> fail
+                       (Ldap_types.LDAP_Failure
+                          (`LOCAL_ERROR, "invalid ldap url", ext_res))))
+        hosts
+    in hosts >>= fun hosts ->
+
     let addrs =
+      map_s
+        (fun (mech, host, port) ->
+           (* FIXME: support IPv6? (e.g. with optional param to init) *)
+           M.IO.getaddrinfo host (string_of_int port)
+             [Unix.AI_SOCKTYPE Unix.SOCK_STREAM; Unix.AI_FAMILY Unix.PF_INET] >|=
+           List.map (fun ai -> (mech, ai.Unix.ai_addr)))
+        hosts >|=
       List.flatten
-        (List.map
-           (fun (mech, host, port) ->
-              List.map
-                (fun ai -> (mech, ai.Unix.ai_addr))
-                (* FIXME: should use non-block resolution in the M monad *)
-                (Unix.getaddrinfo host (string_of_int port)
-                   (* FIXME: should we support IPv6 (e.g. with optional param
-                    * to init) *)
-                   [Unix.AI_SOCKTYPE Unix.SOCK_STREAM; Unix.AI_FAMILY Unix.PF_INET]))
-                (List.map
-                   (fun host ->
-                      (match Ldap_url.of_string host with
-                           {Ldap_types.url_mech=mech;url_host=(Some host);url_port=(Some port)} ->
-                             (mech, host, int_of_string port)
-                         | {Ldap_types.url_mech=mech;url_host=(Some host);url_port=None} ->
-                             (mech, host, 389)
-                         | _ -> raise
-                                  (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "invalid ldap url", ext_res))))
-                   hosts)) in
+    in addrs >>= fun addrs ->
 
     let rec open_con = function
       | [] -> fail (Ldap_types.LDAP_Failure (`SERVER_DOWN, "", ext_res))

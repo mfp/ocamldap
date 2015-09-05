@@ -171,6 +171,8 @@ struct
     type input_channel = fd
     type output_channel = fd
 
+    let getaddrinfo = Unix.getaddrinfo
+
     let connect meth ~connect_timeout sockaddr =
       let previous_signal = ref Sys.Signal_default in
         try

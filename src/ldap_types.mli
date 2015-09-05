@@ -340,6 +340,9 @@ module type Monad = sig
     type input_channel
     type output_channel
 
+    val getaddrinfo :
+      string -> string -> Unix.getaddrinfo_option list -> Unix.addr_info list t
+
     val connect :
       [`SSL | `PLAIN ] -> connect_timeout:int ->
       Unix.sockaddr -> (input_channel * output_channel) option t
