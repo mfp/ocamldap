@@ -6732,6 +6732,7 @@ let setup_t =
                       lib_modules =
                         [
                            "Ldap_types";
+                           "Ldap_conc";
                            "Ldap_filter";
                            "Ldap_filterparser";
                            "Ldap_filterlexer";
