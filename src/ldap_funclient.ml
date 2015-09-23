@@ -197,6 +197,9 @@ let bind_s ?(who = "") ?(cred = "") ?(auth_method = `SIMPLE) con =
     end
       (fun () -> free_messageid con msgid)
 
+let freemsg_on_error con msgid f =
+  catch f (fun exn -> free_messageid con msgid >>= fun () -> catch (fun () -> raise exn) fail)
+
 let search ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
   ?(sizelimit=0l) ?(timelimit=0l) ?(attrs = []) ?(attrsonly = false)
   ?(page_control = `Noctrl) con filter =
@@ -205,7 +208,7 @@ let search ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
     {Ldap_types.criticality = false;
     Ldap_types.control_details=(`Paged_results_control {Ldap_types.size; Ldap_types.cookie})}
   in
-    finalize begin fun () ->
+    freemsg_on_error con msgid begin fun () ->
       let controls = match (page_control) with
         | `Noctrl -> None
         | `Initctrl size | `Subctrl (size,_) when size < 1 ->
@@ -233,10 +236,9 @@ let search ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
            controls} >|= fun _ ->
         msgid
     end
-    (fun () -> free_messageid con msgid)
 
 let get_search_entry con msgid =
-  finalize begin fun () ->
+  freemsg_on_error con msgid begin fun () ->
     receive_message con msgid >>= function
         {Ldap_types.protocolOp=Ldap_types.Search_result_entry e} -> return (`Entry e)
       | {Ldap_types.protocolOp=Ldap_types.Search_result_reference r} -> return (`Referral r)
@@ -248,10 +250,9 @@ let get_search_entry con msgid =
                               ext_referral=res.Ldap_types.ldap_referral}))
       | _ -> fail (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "unexpected search response", ext_res))
   end
-    (fun () -> free_messageid con msgid)
 
 let get_search_entry_with_controls con msgid =
-  finalize begin fun () ->
+  freemsg_on_error con msgid begin fun () ->
     receive_message con msgid >>= function
         {Ldap_types.protocolOp=Ldap_types.Search_result_entry e} -> return (`Entry e)
       | {Ldap_types.protocolOp=Ldap_types.Search_result_reference r} -> return (`Referral r)
@@ -263,7 +264,6 @@ let get_search_entry_with_controls con msgid =
                               ext_referral=res.Ldap_types.ldap_referral}))
       | _ -> fail (Ldap_types.LDAP_Failure (`LOCAL_ERROR, "unexpected search response", ext_res))
   end
-    (fun () -> free_messageid con msgid)
 
 let abandon con msgid =
   let my_msgid = allocate_messageid con in
@@ -291,13 +291,11 @@ let search_s ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
       | `OK x -> loop (x :: results)
       | `EXN (Ldap_types.LDAP_Failure (`SUCCESS, _, _)) -> return results
       | `EXN (Ldap_types.LDAP_Failure (code, msg, ext)) -> fail (Ldap_types.LDAP_Failure (code, msg, ext))
-      | `EXN exn ->
-          catch (fun () -> abandon con msgid) (fun _ -> return ()) >>= fun () ->
-          fail exn
+      | `EXN exn -> fail exn
   in
     finalize
       (fun () -> loop [])
-      (fun () -> free_messageid con msgid)
+      (fun () -> abandon con msgid)
 
 let add_s con (entry: entry) =
   let msgid = allocate_messageid con in
