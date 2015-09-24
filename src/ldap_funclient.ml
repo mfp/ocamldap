@@ -291,11 +291,14 @@ let search_s ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
       | `OK x -> loop (x :: results)
       | `EXN (Ldap_types.LDAP_Failure (`SUCCESS, _, _)) -> return results
       | `EXN (Ldap_types.LDAP_Failure (code, msg, ext)) -> fail (Ldap_types.LDAP_Failure (code, msg, ext))
-      | `EXN exn -> fail exn
+      | `EXN exn ->
+          catch (fun () -> abandon con msgid) (fun _ -> return ()) >>= fun () ->
+          (* try to preserve backtrace *)
+          catch (fun () -> raise exn) fail
   in
     finalize
       (fun () -> loop [])
-      (fun () -> abandon con msgid)
+      (fun () -> free_messageid con msgid)
 
 let add_s con (entry: entry) =
   let msgid = allocate_messageid con in
