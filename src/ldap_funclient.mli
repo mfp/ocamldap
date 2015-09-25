@@ -162,7 +162,7 @@ val get_search_entry_with_controls :
   @raise Encoding_error for encoder errors (unlikely, probably a bug) *)
 val abandon : conn -> msgid -> unit M.t
 
-(** This is the syncronus version of search. It blocks until the
+(** This is the synchronous version of search. It blocks until the
   search is complete, and returns a list of objects. It is exactly the
   same in all other ways. *)
 val search_s :
@@ -173,6 +173,25 @@ val search_s :
   ?timelimit:int32 ->
   ?attrs:string list ->
   ?attrsonly:bool ->
+  conn ->
+  string ->
+  [> `Entry of Ldap_types.search_result_entry | `Referral of string list ]
+  list M.t
+
+(** This is the synchronous version of search, with paging via the [page_size]
+    parameter. It blocks until the search is complete, and returns a list of
+    objects. It is exactly the same in all other ways.
+
+    @param page_size default 1000
+    *)
+val search_paged_s :
+  ?base:string ->
+  ?scope:Ldap_types.search_scope ->
+  ?aliasderef:Ldap_types.alias_deref ->
+  ?timelimit:int32 ->
+  ?attrs:string list ->
+  ?attrsonly:bool ->
+  ?page_size:int ->
   conn ->
   string ->
   [> `Entry of Ldap_types.search_result_entry | `Referral of string list ]

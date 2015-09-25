@@ -300,6 +300,64 @@ let search_s ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
       (fun () -> loop [])
       (fun () -> free_messageid con msgid)
 
+let rec filter_map f l =
+  let rec loop_filter_map f acc = function
+    | [] -> List.rev acc
+    | x :: tl ->
+        match f x with
+          | None -> loop_filter_map f acc tl
+          | Some y -> loop_filter_map f (y :: acc) tl
+  in
+    loop_filter_map f [] l
+
+let search_paged_s ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
+  ?(timelimit=0l) ?(attrs = []) ?(attrsonly = false) ?(page_size=500) con filter =
+
+  let rec loop results msgid =
+    let open Ldap_types in
+    begin
+      catch
+        (fun () -> get_search_entry_with_controls con msgid >|= fun x -> `OK x)
+        (fun exn -> return (`EXN exn))
+    end >>=
+    function
+      | `OK (`Entry _ | `Referral _ as x) -> loop (x :: results) msgid
+      | `OK (`Success (Some cd)) -> begin
+          match
+            filter_map
+              (function
+                 | { control_details = `Paged_results_control { cookie; _ }; _ } -> Some cookie
+                 | _ -> None)
+              cd
+          with
+            | [] | ("" :: _) ->
+                free_messageid con msgid >>= fun () ->
+                return results
+            | cookie :: _ ->
+                freemsg_on_error con msgid
+                  (fun () ->
+                     search
+                       ~page_control:(`Subctrl (max 1 page_size, cookie))
+                       ~base ~scope ~aliasderef
+                       ~timelimit ~attrs ~attrsonly con filter >>=
+                     loop results)
+        end
+      | `OK (`Success None)
+      | `EXN (Ldap_types.LDAP_Failure (`SUCCESS, _, _)) ->
+          free_messageid con msgid >>= fun () ->
+          return results
+      | `EXN (Ldap_types.LDAP_Failure (code, msg, ext)) -> fail (Ldap_types.LDAP_Failure (code, msg, ext))
+      | `EXN exn ->
+          catch (fun () -> abandon con msgid) (fun _ -> return ()) >>= fun () ->
+          (* try to preserve backtrace *)
+          catch (fun () -> raise exn) fail
+  in
+    search
+      ~page_control:(`Initctrl (max 1 page_size))
+      ~base:base ~scope:scope ~aliasderef:aliasderef
+      ~timelimit:timelimit ~attrs:attrs ~attrsonly:attrsonly con filter >>=
+    loop []
+
 let add_s con (entry: entry) =
   let msgid = allocate_messageid con in
     finalize begin fun () ->
