@@ -289,16 +289,16 @@ let search_s ?(base = "") ?(scope = `SUBTREE) ?(aliasderef=`NEVERDEREFALIASES)
     end >>=
     function
       | `OK x -> loop (x :: results)
-      | `EXN (Ldap_types.LDAP_Failure (`SUCCESS, _, _)) -> return results
+      | `EXN (Ldap_types.LDAP_Failure (`SUCCESS, _, _)) ->
+          free_messageid con msgid >>= fun () ->
+          return results
       | `EXN (Ldap_types.LDAP_Failure (code, msg, ext)) -> fail (Ldap_types.LDAP_Failure (code, msg, ext))
       | `EXN exn ->
           catch (fun () -> abandon con msgid) (fun _ -> return ()) >>= fun () ->
           (* try to preserve backtrace *)
           catch (fun () -> raise exn) fail
   in
-    finalize
-      (fun () -> loop [])
-      (fun () -> free_messageid con msgid)
+    loop []
 
 let rec filter_map f l =
   let rec loop_filter_map f acc = function
