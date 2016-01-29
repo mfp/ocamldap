@@ -139,8 +139,10 @@ let init ?(connect_timeout = 1) ?(version = 3) hosts =
            (match Ldap_url.of_string host with
                 {Ldap_types.url_mech=mech;url_host=(Some host);url_port=(Some port)} ->
                   return (mech, host, int_of_string port)
-              | {Ldap_types.url_mech=mech;url_host=(Some host);url_port=None} ->
-                  return (mech, host, 389)
+              | {Ldap_types.url_mech=`SSL;url_host=(Some host);url_port=None} ->
+                  return (`SSL, host, 636)
+              | {Ldap_types.url_mech=`PLAIN;url_host=(Some host);url_port=None} ->
+                  return (`PLAIN, host, 389)
               | _ -> fail
                        (Ldap_types.LDAP_Failure
                           (`LOCAL_ERROR, "invalid ldap url", ext_res))))
