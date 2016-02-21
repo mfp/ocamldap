@@ -1,15 +1,13 @@
 
 open Ldap_ooclient
 
-module M = Ldap_conc.Id
-
 (** the abstract type of a transaction *)
 type txn
 
 (** raised when a commit fails, contains a list of entries which were
     not rolled back successfully only if rollback failed as well,
     otherwise None *)
-exception Txn_commit_failure of string * exn * Make(M).ldapentry_t list option
+exception Txn_commit_failure of string * exn * Make(Ldap_conc.Id).ldapentry_t list option
 
 (** raised when an explicit rollback fails *)
 exception Txn_rollback_failure of string * exn
@@ -43,35 +41,35 @@ class ldapadvisorytxcon :
   ?version:int ->
   string list -> string -> string -> string -> (* hosts binddn bindpw mutextbldn *)
   object
-    method add : Make(M).ldapentry -> unit
+    method add : Make(Ldap_conc.Id).ldapentry -> unit
     method bind :
-      ?cred:string -> ?meth:Ldap_funclient.Make(M).authmethod -> string -> unit
+      ?cred:string -> ?meth:Ldap_funclient.Make(Ldap_conc.Id).authmethod -> string -> unit
     method delete : string -> unit
     method modify :
       string ->
       (Ldap_types.modify_optype * string * string list) list -> unit
     method modrdn : string -> ?deleteoldrdn:bool -> ?newsup:string option -> string -> unit
-    method rawschema : Make(M).ldapentry
+    method rawschema : Make(Ldap_conc.Id).ldapentry
     method schema : Ldap_schema.schema
     method search :
       ?scope:Ldap_types.search_scope ->
       ?attrs:string list ->
       ?attrsonly:bool -> ?base:string ->
       ?sizelimit:Int32.t -> ?timelimit:Int32.t ->
-      string -> Make(M).ldapentry list
+      string -> Make(Ldap_conc.Id).ldapentry list
     method search_a :
       ?scope:Ldap_types.search_scope ->
       ?attrs:string list ->
       ?attrsonly:bool -> ?base:string ->
       ?sizelimit:Int32.t ->  ?timelimit:Int32.t ->
-      string -> (?abandon:bool -> unit -> Make(M).ldapentry)
+      string -> (?abandon:bool -> unit -> Make(Ldap_conc.Id).ldapentry)
     method unbind : unit
-    method update_entry : Make(M).ldapentry -> unit
+    method update_entry : Make(Ldap_conc.Id).ldapentry -> unit
     method begin_txn : txn
-    method associate_entry : txn -> Make(M).ldapentry_t -> unit
-    method associate_entries : txn -> Make(M).ldapentry_t list -> unit
-    method disassociate_entry : txn -> Make(M).ldapentry_t -> unit
-    method disassociate_entries : txn -> Make(M).ldapentry_t list -> unit
+    method associate_entry : txn -> Make(Ldap_conc.Id).ldapentry_t -> unit
+    method associate_entries : txn -> Make(Ldap_conc.Id).ldapentry_t list -> unit
+    method disassociate_entry : txn -> Make(Ldap_conc.Id).ldapentry_t -> unit
+    method disassociate_entries : txn -> Make(Ldap_conc.Id).ldapentry_t list -> unit
     method commit_txn : txn -> unit
     method rollback_txn : txn -> unit
   end
